@@ -7,7 +7,7 @@ Sistema de detecção de intrusos com ESP32, comunicação MQTT e backend em Pyt
 ## 👥 Membros do Grupo
 
 | Nome  |
-|---|---|
+|---|
 | FERNANDO YAMAMOTO LICHTENFELS RICCIO  |
 | DYLAN KIYOSHI KANEKO NISHINA |
 | LIOR LERNER |

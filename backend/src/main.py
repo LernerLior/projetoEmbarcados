@@ -1,13 +1,13 @@
 import paho.mqtt.client as mqtt
 import psycopg2
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from contextlib import asynccontextmanager
 import threading
 import json
 from datetime import datetime
+import asyncio
 
-app = FastAPI()
-
-# WebSocket Manager
+# ── WebSocket Manager ────────────────────────────────
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
@@ -25,7 +25,7 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# Banco de dados 
+# ── Banco de dados ───────────────────────────────────
 def get_db():
     return psycopg2.connect(
         host="postgres",
@@ -33,6 +33,18 @@ def get_db():
         user="admin",
         password="senha123"
     )
+
+async def esperar_banco():
+    print("Aguardando PostgreSQL ficar pronto...")
+    while True:
+        try:
+            conn = get_db()
+            conn.close()
+            print("PostgreSQL pronto! ✅")
+            return
+        except Exception as e:
+            print(f"PostgreSQL ainda não está pronto: {e}")
+            await asyncio.sleep(2)
 
 def criar_tabela():
     conn = get_db()
@@ -47,8 +59,21 @@ def criar_tabela():
     cur.close()
     conn.close()
 
-# MQTT 
+# ── MQTT ─────────────────────────────────────────────
 estado_atual = {"armed": 0}
+
+async def esperar_mqtt():
+    print("Aguardando Mosquitto ficar pronto...")
+    while True:
+        try:
+            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
+            client.connect("mosquitto", 1883, 60)
+            client.disconnect()
+            print("Mosquitto pronto! ✅")
+            return
+        except Exception as e:
+            print(f"Mosquitto ainda não está pronto: {e}")
+            await asyncio.sleep(2)
 
 def on_connect(client, userdata, flags, rc):
     print("Conectado ao broker MQTT!")
@@ -63,7 +88,6 @@ def on_message(client, userdata, msg):
         agora = datetime.now()
         print(f"Alerta recebido em {agora.strftime('%d/%m/%Y %H:%M:%S')}")
 
-        # salva no banco
         conn = get_db()
         cur = conn.cursor()
         cur.execute("INSERT INTO alerts (timestamp) VALUES (%s) RETURNING id", (agora,))
@@ -72,15 +96,12 @@ def on_message(client, userdata, msg):
         cur.close()
         conn.close()
 
-        # monta o alerta
         alerta = {
             "id": alert_id,
             "dia": agora.strftime("%d/%m/%Y"),
             "horario": agora.strftime("%H:%M:%S")
         }
 
-        # dispara para todos os apps conectados via WebSocket
-        import asyncio
         asyncio.run(manager.broadcast(alerta))
 
     elif topic == "security/status":
@@ -88,16 +109,27 @@ def on_message(client, userdata, msg):
         print(f"Estado atualizado: {'armado' if estado_atual['armed'] else 'desarmado'}")
 
 def iniciar_mqtt():
-    client = mqtt.Client()
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
     client.on_connect = on_connect
     client.on_message = on_message
     client.connect("mosquitto", 1883, 60)
     client.loop_forever()
 
-threading.Thread(target=iniciar_mqtt, daemon=True).start()
-criar_tabela()
+# ── Lifespan ─────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # startup
+    await esperar_banco()
+    criar_tabela()
+    await esperar_mqtt()
+    threading.Thread(target=iniciar_mqtt, daemon=True).start()
+    print("Backend iniciado com sucesso! ✅")
+    yield
+    # shutdown (se precisar limpar algo)
 
-# Endpoints 
+app = FastAPI(lifespan=lifespan)
+
+# ── Endpoints ────────────────────────────────────────
 
 @app.get("/status")
 def get_status():
@@ -105,7 +137,7 @@ def get_status():
 
 @app.post("/control")
 def controlar_sistema(ativo: int):
-    client = mqtt.Client()
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
     client.connect("mosquitto", 1883, 60)
     client.publish("security/control", str(ativo))
     client.disconnect()

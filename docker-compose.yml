@@ -10,6 +10,8 @@ services:
       - ./mosquitto/data:/mosquitto/data
       - ./mosquitto/log:/mosquitto/log
     restart: unless-stopped
+    networks:
+      - app_network
 
   postgres:
     image: postgres:16
@@ -23,6 +25,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
+    networks:
+      - app_network
 
   backend:
     build: ./backend
@@ -33,6 +37,12 @@ services:
       - mosquitto
       - postgres
     restart: unless-stopped
+    networks:
+      - app_network
 
 volumes:
   postgres_data:
+
+networks:
+  app_network:
+    driver: bridge

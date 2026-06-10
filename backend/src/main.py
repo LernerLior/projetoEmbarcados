@@ -82,7 +82,13 @@ def on_connect(client, userdata, flags, rc):
 
 def on_message(client, userdata, msg):
     topic = msg.topic
-    payload = json.loads(msg.payload.decode())
+    raw = msg.payload.decode()
+
+    # tenta JSON, senão usa o valor direto
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        payload = raw
 
     if topic == "security/alert":
         agora = datetime.now()
@@ -105,7 +111,11 @@ def on_message(client, userdata, msg):
         asyncio.run(manager.broadcast(alerta))
 
     elif topic == "security/status":
-        estado_atual["armed"] = payload.get("armed")
+        # aceita tanto {"armed": 1} quanto só "1"
+        if isinstance(payload, dict):
+            estado_atual["armed"] = payload.get("armed")
+        else:
+            estado_atual["armed"] = int(payload)
         print(f"Estado atualizado: {'armado' if estado_atual['armed'] else 'desarmado'}")
 
 def iniciar_mqtt():

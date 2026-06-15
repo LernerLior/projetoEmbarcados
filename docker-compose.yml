@@ -4,45 +4,45 @@ services:
     container_name: mqtt_broker
     ports:
       - "1883:1883"
-      - "9001:9001"
     volumes:
       - ./mosquitto/config:/mosquitto/config
       - ./mosquitto/data:/mosquitto/data
       - ./mosquitto/log:/mosquitto/log
     restart: unless-stopped
     networks:
-      - app_network
+      - web-public
+      - backend-internal
 
   postgres:
-    image: postgres:16
+    image: postgres:16-alpine
     container_name: postgres_db
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: senha123
       POSTGRES_DB: seguranca
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     networks:
-      - app_network
+      - backend-internal
 
   backend:
     build: ./backend
-    container_name: backend_python
-    ports:
-      - "8000:8000"
+    image: ricciow/embarcados:latest
+    container_name: backend_python_embarcados
     depends_on:
       - mosquitto
       - postgres
     restart: unless-stopped
     networks:
-      - app_network
+      - web-public
+      - backend-internal
+
+networks:
+  web-public:
+    external: true
+  backend-internal:
+    driver: bridge
 
 volumes:
   postgres_data:
-
-networks:
-  app_network:
-    driver: bridge

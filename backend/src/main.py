@@ -52,6 +52,7 @@ def criar_tabela():
     cur.execute("""
         CREATE TABLE IF NOT EXISTS alerts (
             id SERIAL PRIMARY KEY,
+            zone INT NOT NULL CHECK (zone BETWEEN 1 AND 5),
             timestamp TIMESTAMP NOT NULL
         )
     """)
@@ -84,7 +85,6 @@ def on_message(client, userdata, msg):
     topic = msg.topic
     raw = msg.payload.decode()
 
-    # tenta JSON, senão usa o valor direto
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -92,11 +92,21 @@ def on_message(client, userdata, msg):
 
     if topic == "security/alert":
         agora = datetime.now()
-        print(f"Alerta recebido em {agora.strftime('%d/%m/%Y %H:%M:%S')}")
+
+        # pega a zona, padrão 0 se não informada
+        if isinstance(payload, dict):
+            zone = payload.get("zone", 0)
+        else:
+            zone = 0
+
+        print(f"Alerta recebido na zona {zone} em {agora.strftime('%d/%m/%Y %H:%M:%S')}")
 
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("INSERT INTO alerts (timestamp) VALUES (%s) RETURNING id", (agora,))
+        cur.execute(
+            "INSERT INTO alerts (zone, timestamp) VALUES (%s, %s) RETURNING id",
+            (zone, agora)
+        )
         alert_id = cur.fetchone()[0]
         conn.commit()
         cur.close()
@@ -104,6 +114,7 @@ def on_message(client, userdata, msg):
 
         alerta = {
             "id": alert_id,
+            "zone": zone,
             "dia": agora.strftime("%d/%m/%Y"),
             "horario": agora.strftime("%H:%M:%S")
         }
@@ -111,7 +122,6 @@ def on_message(client, userdata, msg):
         asyncio.run(manager.broadcast(alerta))
 
     elif topic == "security/status":
-        # aceita tanto {"armed": 1} quanto só "1"
         if isinstance(payload, dict):
             estado_atual["armed"] = payload.get("armed")
         else:
@@ -128,14 +138,12 @@ def iniciar_mqtt():
 # ── Lifespan ─────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # startup
     await esperar_banco()
     criar_tabela()
     await esperar_mqtt()
     threading.Thread(target=iniciar_mqtt, daemon=True).start()
     print("Backend iniciado com sucesso! ✅")
     yield
-    # shutdown (se precisar limpar algo)
 
 app = FastAPI(lifespan=lifespan)
 
@@ -164,8 +172,29 @@ def listar_alertas():
     return [
         {
             "id": r[0],
-            "dia": r[1].strftime("%d/%m/%Y"),
-            "horario": r[1].strftime("%H:%M:%S")
+            "zone": r[1],
+            "dia": r[2].strftime("%d/%m/%Y"),
+            "horario": r[2].strftime("%H:%M:%S")
+        }
+        for r in rows
+    ]
+
+@app.get("/alerts/zone/{zone_id}")
+def alertas_por_zona(zone_id: int):
+    if zone_id < 1 or zone_id > 5:
+        return {"erro": "Zona inválida. Use entre 1 e 5."}
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM alerts WHERE zone = %s ORDER BY timestamp DESC", (zone_id,))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return [
+        {
+            "id": r[0],
+            "zone": r[1],
+            "dia": r[2].strftime("%d/%m/%Y"),
+            "horario": r[2].strftime("%H:%M:%S")
         }
         for r in rows
     ]
@@ -182,8 +211,9 @@ def get_alerta(alert_id: int):
         return {"erro": "Alerta não encontrado"}
     return {
         "id": row[0],
-        "dia": row[1].strftime("%d/%m/%Y"),
-        "horario": row[1].strftime("%H:%M:%S")
+        "zone": row[1],
+        "dia": row[2].strftime("%d/%m/%Y"),
+        "horario": row[2].strftime("%H:%M:%S")
     }
 
 @app.websocket("/ws/alerts")

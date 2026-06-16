@@ -6,9 +6,9 @@ Sistema de detecção de intrusos com ESP32, comunicação MQTT e backend em Pyt
 
 ## 👥 Membros do Grupo
 
-| Nome  |
+| Nome |
 |---|
-| FERNANDO YAMAMOTO LICHTENFELS RICCIO  |
+| FERNANDO YAMAMOTO LICHTENFELS RICCIO |
 | DYLAN KIYOSHI KANEKO NISHINA |
 | LIOR LERNER |
 | VINICIUS FIORAVANTE SILVA |
@@ -17,14 +17,14 @@ Sistema de detecção de intrusos com ESP32, comunicação MQTT e backend em Pyt
 
 ## 📋 Sobre o Projeto
 
-Sistema embarcado de segurança com detecção de intrusos via sensores conectados a um ESP32. O backend recebe alertas em tempo real via MQTT e os disponibiliza para um aplicativo mobile via REST API e WebSocket.
+Sistema embarcado de segurança com detecção de intrusos via sensores conectados a um ESP32. O backend recebe alertas em tempo real via MQTT, identifica qual das 5 zonas foi ativada e disponibiliza as informações para um aplicativo mobile via REST API e WebSocket.
 
 ---
 
 ## 🏗️ Arquitetura
 
 ```
-ESP32 + Sensores
+ESP32 + Sensores (5 zonas)
       │
       │ MQTT
       ▼
@@ -36,7 +36,7 @@ ESP32 + Sensores
       │
       ├── REST API  ──► Aplicativo
       ├── WebSocket ──► Alertas em tempo real
-      └── PostgreSQL ─► Histórico de alertas
+      └── PostgreSQL ─► Histórico de alertas por zona
 ```
 
 ---
@@ -102,7 +102,7 @@ backend_python   ✅
 
 | Tópico | Direção | Payload | Descrição |
 |---|---|---|---|
-| `security/alert` | ESP32 → Backend | `{"alert": true}` | Sensor ativado |
+| `security/alert` | ESP32 → Backend | `{"zone": 1}` até `{"zone": 5}` | Sensor ativado em uma zona |
 | `security/status` | ESP32 → Backend | `{"armed": 1}` ou `{"armed": 0}` | Estado do sistema |
 | `security/control` | Backend → ESP32 | `1` ou `0` | Armar ou desarmar |
 
@@ -117,6 +117,7 @@ backend_python   ✅
 | `POST` | `/control?ativo=0` | Desarma o sistema |
 | `GET` | `/alerts` | Retorna histórico completo de alertas |
 | `GET` | `/alerts/{id}` | Retorna um alerta específico |
+| `GET` | `/alerts/zone/{zone_id}` | Retorna alertas de uma zona específica (1 a 5) |
 | `WS` | `/ws/alerts` | Alertas em tempo real via WebSocket |
 
 ### Exemplos de resposta
@@ -133,6 +134,25 @@ backend_python   ✅
 [
     {
         "id": 1,
+        "zone": 3,
+        "dia": "09/06/2026",
+        "horario": "14:32:05"
+    },
+    {
+        "id": 2,
+        "zone": 1,
+        "dia": "09/06/2026",
+        "horario": "15:10:22"
+    }
+]
+```
+
+**GET /alerts/zone/3**
+```json
+[
+    {
+        "id": 1,
+        "zone": 3,
         "dia": "09/06/2026",
         "horario": "14:32:05"
     }
@@ -157,6 +177,7 @@ O FastAPI gera automaticamente uma interface para testar todos os endpoints.
 | Campo | Tipo | Descrição |
 |---|---|---|
 | `id` | SERIAL | Identificador único |
+| `zone` | INT (1-5) | Zona que foi ativada |
 | `timestamp` | TIMESTAMP | Data e horário do alerta |
 
 ---
@@ -172,19 +193,29 @@ Teste todos os endpoints clicando, sem precisar de nenhuma ferramenta extra.
 
 ### Forma 2 — Simulando o ESP32 pelo terminal
 
-**Simula um alerta:**
+Entre no container do broker:
 ```bash
-docker exec -it mqtt_broker mosquitto_pub -t "security/alert" -m '{"alert": true}'
+docker exec -it mqtt_broker sh
+```
+
+**Simula alerta na zona 1:**
+```bash
+mosquitto_pub -t "security/alert" -m '{"zone": 1}'
+```
+
+**Simula alerta na zona 3:**
+```bash
+mosquitto_pub -t "security/alert" -m '{"zone": 3}'
 ```
 
 **Simula o ESP32 armado:**
 ```bash
-docker exec -it mqtt_broker mosquitto_pub -t "security/status" -m '{"armed": 1}'
+mosquitto_pub -t "security/status" -m '{"armed": 1}'
 ```
 
 **Simula o ESP32 desarmado:**
 ```bash
-docker exec -it mqtt_broker mosquitto_pub -t "security/status" -m '{"armed": 0}'
+mosquitto_pub -t "security/status" -m '{"armed": 0}'
 ```
 
 ### Fluxo sugerido
@@ -193,7 +224,8 @@ docker exec -it mqtt_broker mosquitto_pub -t "security/status" -m '{"armed": 0}'
 2. Abre http://localhost:8000/docs
 3. Testa GET /status → deve retornar {"armed": 0}
 4. Simula ESP32 armando → testa GET /status novamente
-5. Simula um alerta → testa GET /alerts
+5. Simula alerta na zona 2 → testa GET /alerts
+6. Testa GET /alerts/zone/2 → deve retornar só os alertas da zona 2
 ```
 
 ---

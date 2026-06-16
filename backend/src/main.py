@@ -6,6 +6,7 @@ import threading
 import json
 from datetime import datetime
 import asyncio
+from telegram import enviar_telegram
 
 # ── WebSocket Manager ────────────────────────────────
 class ConnectionManager:
@@ -93,7 +94,6 @@ def on_message(client, userdata, msg):
     if topic == "security/alert":
         agora = datetime.now()
 
-        # pega a zona, padrão 0 se não informada
         if isinstance(payload, dict):
             zone = payload.get("zone", 0)
         else:
@@ -118,6 +118,13 @@ def on_message(client, userdata, msg):
             "dia": agora.strftime("%d/%m/%Y"),
             "horario": agora.strftime("%H:%M:%S")
         }
+
+        enviar_telegram(
+            f"🚨 ALERTA DE INTRUSO!\n"
+            f"Zona: {zone}\n"
+            f"Data: {agora.strftime('%d/%m/%Y')}\n"
+            f"Horário: {agora.strftime('%H:%M:%S')}"
+        )
 
         asyncio.run(manager.broadcast(alerta))
 

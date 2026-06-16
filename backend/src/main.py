@@ -1,6 +1,6 @@
 import paho.mqtt.client as mqtt
 import psycopg2
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status
 from contextlib import asynccontextmanager
 import threading
 import json
@@ -17,11 +17,16 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
         for connection in self.active_connections:
-            await connection.send_json(message)
+            try:
+                await connection.send_json(message)
+            except Exception:
+                # Remove conexões mortas que falharam no envio
+                self.disconnect(connection)
 
 manager = ConnectionManager()
 
@@ -62,6 +67,8 @@ def criar_tabela():
 
 # ── MQTT ─────────────────────────────────────────────
 estado_atual = {"armed": 0}
+# Loop de eventos assíncronos principal para o broadcast
+main_loop = None 
 
 async def esperar_mqtt():
     print("Aguardando Mosquitto ficar pronto...")
@@ -82,6 +89,7 @@ def on_connect(client, userdata, flags, rc):
     client.subscribe("security/status")
 
 def on_message(client, userdata, msg):
+    global main_loop
     topic = msg.topic
     raw = msg.payload.decode()
 
@@ -93,24 +101,34 @@ def on_message(client, userdata, msg):
     if topic == "security/alert":
         agora = datetime.now()
 
-        # pega a zona, padrão 0 se não informada
         if isinstance(payload, dict):
-            zone = payload.get("zone", 0)
+            zone = payload.get("zone", 1)  # Mudado para 1 para não quebrar o CHECK(1-5) do banco
         else:
-            zone = 0
+            try:
+                zone = int(payload)
+            except ValueError:
+                zone = 1
+
+        # Garante que a zona está no limite correto do banco de dados
+        if zone < 1 or zone > 5:
+            zone = 1
 
         print(f"Alerta recebido na zona {zone} em {agora.strftime('%d/%m/%Y %H:%M:%S')}")
 
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO alerts (zone, timestamp) VALUES (%s, %s) RETURNING id",
-            (zone, agora)
-        )
-        alert_id = cur.fetchone()[0]
-        conn.commit()
-        cur.close()
-        conn.close()
+        try:
+            conn = get_db()
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO alerts (zone, timestamp) VALUES (%s, %s) RETURNING id",
+                (zone, agora)
+            )
+            alert_id = cur.fetchone()[0]
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as db_err:
+            print(f"Erro ao salvar no banco: {db_err}")
+            return
 
         alerta = {
             "id": alert_id,
@@ -119,13 +137,18 @@ def on_message(client, userdata, msg):
             "horario": agora.strftime("%H:%M:%S")
         }
 
-        asyncio.run(manager.broadcast(alerta))
+        # Envia de forma segura para o loop assíncrono principal da FastAPI
+        if main_loop:
+            asyncio.run_coroutine_threadsafe(manager.broadcast(alerta), main_loop)
 
     elif topic == "security/status":
         if isinstance(payload, dict):
-            estado_atual["armed"] = payload.get("armed")
+            estado_atual["armed"] = int(payload.get("armed", 0))
         else:
-            estado_atual["armed"] = int(payload)
+            try:
+                estado_atual["armed"] = int(payload)
+            except ValueError:
+                estado_atual["armed"] = 0
         print(f"Estado atualizado: {'armado' if estado_atual['armed'] else 'desarmado'}")
 
 def iniciar_mqtt():
@@ -138,6 +161,8 @@ def iniciar_mqtt():
 # ── Lifespan ─────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global main_loop
+    main_loop = asyncio.get_running_loop() # Captura o loop assíncrono principal
     await esperar_banco()
     criar_tabela()
     await esperar_mqtt()
@@ -155,11 +180,16 @@ def get_status():
 
 @app.post("/control")
 def controlar_sistema(ativo: int):
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
-    client.connect("mosquitto", 1883, 60)
-    client.publish("security/control", str(ativo))
-    client.disconnect()
-    return {"status": "enviado", "ativo": ativo}
+    if ativo not in:
+        raise HTTPException(status_code=400, detail="Valor de controle deve ser 0 ou 1.")
+    try:
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
+        client.connect("mosquitto", 1883, 60)
+        client.publish("security/control", str(ativo))
+        client.disconnect()
+        return {"status": "enviado", "ativo": ativo}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao conectar ao MQTT: {e}")
 
 @app.get("/alerts")
 def listar_alertas():
@@ -182,7 +212,7 @@ def listar_alertas():
 @app.get("/alerts/zone/{zone_id}")
 def alertas_por_zona(zone_id: int):
     if zone_id < 1 or zone_id > 5:
-        return {"erro": "Zona inválida. Use entre 1 e 5."}
+        raise HTTPException(status_code=400, detail="Zona inválida. Use entre 1 e 5.")
     conn = get_db()
     cur = conn.cursor()
     cur.execute("SELECT * FROM alerts WHERE zone = %s ORDER BY timestamp DESC", (zone_id,))
@@ -208,7 +238,7 @@ def get_alerta(alert_id: int):
     cur.close()
     conn.close()
     if row is None:
-        return {"erro": "Alerta não encontrado"}
+        raise HTTPException(status_code=404, detail="Alerta não encontrado")
     return {
         "id": row[0],
         "zone": row[1],

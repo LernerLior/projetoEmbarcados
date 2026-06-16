@@ -6,6 +6,8 @@ import threading
 import json
 from datetime import datetime
 import asyncio
+import pytz
+
 from telegram import enviar_telegram
 
 # ── WebSocket Manager ────────────────────────────────
@@ -25,6 +27,9 @@ class ConnectionManager:
             await connection.send_json(message)
 
 manager = ConnectionManager()
+
+# ── Fuso horário ─────────────────────────────────────
+fuso_brasil = pytz.timezone("America/Sao_Paulo")
 
 # ── Banco de dados ───────────────────────────────────
 def get_db():
@@ -92,7 +97,7 @@ def on_message(client, userdata, msg):
         payload = raw
 
     if topic == "security/alert":
-        agora = datetime.now()
+        agora = datetime.now(fuso_brasil)  # ← fuso horário correto
 
         if isinstance(payload, dict):
             zone = payload.get("zone", 0)

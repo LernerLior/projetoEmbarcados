@@ -1,11 +1,13 @@
 import paho.mqtt.client as mqtt
 import psycopg2
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status, Request, Form
+from fastapi.responses import RedirectResponse, JSONResponse
 from contextlib import asynccontextmanager
 import threading
 import json
 from datetime import datetime
 import asyncio
+import secrets
 
 # ── WebSocket Manager ────────────────────────────────
 class ConnectionManager:
@@ -25,7 +27,6 @@ class ConnectionManager:
             try:
                 await connection.send_json(message)
             except Exception:
-                # Remove conexões mortas que falharam no envio
                 self.disconnect(connection)
 
 manager = ConnectionManager()
@@ -67,7 +68,6 @@ def criar_tabela():
 
 # ── MQTT ─────────────────────────────────────────────
 estado_atual = {"armed": 0}
-# Loop de eventos assíncronos principal para o broadcast
 main_loop = None 
 
 async def esperar_mqtt():
@@ -88,6 +88,16 @@ def on_connect(client, userdata, flags, rc):
     client.subscribe("security/alert")
     client.subscribe("security/status")
 
+def enviar_comando_mqtt(ativo: int):
+    """Função auxiliar para publicar de forma síncrona/segura no MQTT"""
+    try:
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
+        client.connect("mosquitto", 1883, 60)
+        client.publish("security/control", str(ativo))
+        client.disconnect()
+    except Exception as e:
+        print(f"Falha ao enviar comando via MQTT: {e}")
+
 def on_message(client, userdata, msg):
     global main_loop
     topic = msg.topic
@@ -102,14 +112,13 @@ def on_message(client, userdata, msg):
         agora = datetime.now()
 
         if isinstance(payload, dict):
-            zone = payload.get("zone", 1)  # Mudado para 1 para não quebrar o CHECK(1-5) do banco
+            zone = payload.get("zone", 1)
         else:
             try:
                 zone = int(payload)
             except ValueError:
                 zone = 1
 
-        # Garante que a zona está no limite correto do banco de dados
         if zone < 1 or zone > 5:
             zone = 1
 
@@ -137,7 +146,6 @@ def on_message(client, userdata, msg):
             "horario": agora.strftime("%H:%M:%S")
         }
 
-        # Envia de forma segura para o loop assíncrono principal da FastAPI
         if main_loop:
             asyncio.run_coroutine_threadsafe(manager.broadcast(alerta), main_loop)
 
@@ -162,7 +170,7 @@ def iniciar_mqtt():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global main_loop
-    main_loop = asyncio.get_running_loop() # Captura o loop assíncrono principal
+    main_loop = asyncio.get_running_loop()
     await esperar_banco()
     criar_tabela()
     await esperar_mqtt()
@@ -172,7 +180,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# ── Endpoints ────────────────────────────────────────
+# ── Endpoints Originais (React) ──────────────────────
 
 @app.get("/status")
 def get_status():
@@ -182,14 +190,8 @@ def get_status():
 def controlar_sistema(ativo: int):
     if ativo not in:
         raise HTTPException(status_code=400, detail="Valor de controle deve ser 0 ou 1.")
-    try:
-        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
-        client.connect("mosquitto", 1883, 60)
-        client.publish("security/control", str(ativo))
-        client.disconnect()
-        return {"status": "enviado", "ativo": ativo}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao conectar ao MQTT: {e}")
+    enviar_comando_mqtt(ativo)
+    return {"status": "enviado", "ativo": ativo}
 
 @app.get("/alerts")
 def listar_alertas():
@@ -200,12 +202,7 @@ def listar_alertas():
     cur.close()
     conn.close()
     return [
-        {
-            "id": r[0],
-            "zone": r[1],
-            "dia": r[2].strftime("%d/%m/%Y"),
-            "horario": r[2].strftime("%H:%M:%S")
-        }
+        {"id": r[0], "zone": r[1], "dia": r[2].strftime("%d/%m/%Y"), "horario": r[2].strftime("%H:%M:%S")}
         for r in rows
     ]
 
@@ -220,12 +217,7 @@ def alertas_por_zona(zone_id: int):
     cur.close()
     conn.close()
     return [
-        {
-            "id": r[0],
-            "zone": r[1],
-            "dia": r[2].strftime("%d/%m/%Y"),
-            "horario": r[2].strftime("%H:%M:%S")
-        }
+        {"id": r[0], "zone": r[1], "dia": r[2].strftime("%d/%m/%Y"), "horario": r[2].strftime("%H:%M:%S")}
         for r in rows
     ]
 
@@ -239,12 +231,7 @@ def get_alerta(alert_id: int):
     conn.close()
     if row is None:
         raise HTTPException(status_code=404, detail="Alerta não encontrado")
-    return {
-        "id": row[0],
-        "zone": row[1],
-        "dia": row[2].strftime("%d/%m/%Y"),
-        "horario": row[2].strftime("%H:%M:%S")
-    }
+    return {"id": row[0], "zone": row[1], "dia": row[2].strftime("%d/%m/%Y"), "horario": row[2].strftime("%H:%M:%S")}
 
 @app.websocket("/ws/alerts")
 async def websocket_alerts(websocket: WebSocket):
@@ -254,3 +241,66 @@ async def websocket_alerts(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+# ── Fluxo Google Home (OAuth2 & Fulfillment) ──────────
+
+@app.get("/oauth/authorize")
+async def oauth_authorize(redirect_uri: str, state: str):
+    # Tela temporária para o aplicativo Google Home aprovar o vínculo de conta
+    # Em produção, você colocaria uma tela de login real aqui.
+    code = secrets.token_hex(16)
+    return RedirectResponse(url=f"{redirect_uri}?code={code}&state={state}")
+
+@app.post("/oauth/token")
+async def oauth_token(grant_type: str = Form(...), code: str = Form(None), refresh_token: str = Form(None)):
+    # Entrega as chaves de acesso que a Google usará para validar as requisições de voz
+    return JSONResponse({
+        "token_type": "bearer",
+        "access_token": "google-access-token-valido",
+        "refresh_token": "google-refresh-token-valido",
+        "expires_in": 3600
+    })
+
+@app.post("/smarthome/fulfillment")
+async def google_fulfillment(request: Request):
+    body = await request.json()
+    inputs = body.get("inputs", [])
+    response_payload = {}
+
+    for i in inputs:
+        intent = i.get("intent")
+
+        # 1. SYNC: Diz ao ecossistema Google que existe um Alarme
+        if intent == "action.devices.SYNC":
+            response_payload = {
+                "agentUserId": "usuario_local_123",
+                "devices": [{
+                    "id": "alarme_casa",
+                    "type": "action.devices.types.SECURITY_SYSTEM",
+                    "traits": ["action.devices.traits.ArmDisarm"],
+                    "name": {"name": "Alarme da Casa", "nicknames": ["alarme", "sistema de segurança"]},
+                    "willReportState": False,
+                    "attributes": {
+                        "availableArmLevels": {
+                            "levels": [{
+                                "level_name": "L1",
+                                "level_values": [{"level_synonym": ["total", "modo completo"], "lang": "pt-BR"}]
+                            }]
+                        }
+                    }
+                }]
+            }
+
+        # 2. QUERY: Responde para a Google se o alarme está ativo ou não
+        elif intent == "action.devices.QUERY":
+            response_payload = {
+                "devices": {
+                    "alarme_casa": {
+                        "online": True,
+                        "isArmed": bool(estado_atual["armed"])
+                    }
+                }
+            }
+
+        # 3. EXECUTE: Dispara quando você fala "Ok Google, arme o alarme"
+        elif intent == "action.devices.EXECUTE":

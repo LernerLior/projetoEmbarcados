@@ -17,14 +17,18 @@ Sistema de detecção de intrusos com ESP32, comunicação MQTT e backend em Pyt
 
 ## 📋 Sobre o Projeto
 
-Sistema embarcado de segurança com detecção de intrusos via sensores conectados a um ESP32. O backend recebe alertas em tempo real via MQTT, identifica qual das 5 zonas foi ativada, salva no banco de dados, envia notificação pelo Telegram e disponibiliza as informações para um aplicativo mobile via REST API e WebSocket.
+Sistema embarcado de segurança com detecção de intrusos via sensores conectados a um ESP32 e uma FPGA. O backend recebe alertas em tempo real via MQTT, identifica qual das 5 zonas foi ativada, salva no banco de dados, envia notificação pelo Telegram e disponibiliza as informações para um aplicativo mobile via REST API e WebSocket.
 
 ---
 
 ## 🏗️ Arquitetura
 
 ```
-ESP32 + Sensores (5 zonas)
+FPGA (Basys 3) + Sensores (5 zonas)
+      │
+      │ Serial (UART)
+      ▼
+ ESP32
       │
       │ MQTT
       ▼
@@ -44,7 +48,8 @@ ESP32 + Sensores (5 zonas)
 
 ## 🛠️ Tecnologias
 
-- **ESP32** — Microcontrolador com sensores de intrusão
+- **ESP32** — Microcontrolador com comunicação WiFi e MQTT
+- **FPGA (Basys 3)** — Leitura dos sensores de intrusão
 - **MQTT / Mosquitto** — Protocolo de comunicação IoT
 - **Python / FastAPI** — Backend e API REST
 - **PostgreSQL** — Banco de dados
@@ -62,12 +67,14 @@ projeto/
 ├── mosquitto/
 │   └── config/
 │       └── mosquitto.conf
-└── backend/
-    ├── Dockerfile
-    ├── requirements.txt
-    └── src/
-        ├── main.py
-        └── telegram.py
+├── backend/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── src/
+│       ├── main.py
+│       └── telegram.py
+└── esp32/
+    └── security_esp32.ino
 ```
 
 ---
@@ -76,6 +83,8 @@ projeto/
 
 ### Pré-requisitos
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado
+- [Arduino IDE](https://www.arduino.cc/en/software) instalado
+- Biblioteca `PubSubClient` instalada no Arduino IDE
 
 ### 1. Clone o repositório
 ```bash
@@ -86,16 +95,24 @@ cd nome-do-repo
 ### 2. Configure o Telegram
 Em `backend/src/telegram.py` substitua as credenciais:
 ```python
-TELEGRAM_TOKEN = "SEU_TOKEN_AQUI"
+TELEGRAM_TOKEN   = "SEU_TOKEN_AQUI"
 TELEGRAM_CHAT_ID = "SEU_CHAT_ID_AQUI"
 ```
 
-### 3. Suba os containers
+### 3. Configure o ESP32
+Em `esp32/security_esp32.ino` substitua os placeholders:
+```cpp
+const char* ssid        = "SEU_WIFI_AQUI";
+const char* password    = "SUA_SENHA_AQUI";
+const char* mqtt_server = "IP_DO_SERVIDOR_AQUI";
+```
+
+### 4. Suba os containers
 ```bash
 docker compose -f docker-compose.local.yml up -d --build
 ```
 
-### 4. Verifique se está tudo rodando
+### 5. Verifique se está tudo rodando
 ```bash
 docker ps
 ```
@@ -107,6 +124,12 @@ postgres_db      ✅
 backend_python   ✅
 ```
 
+### 6. Carregue o código no ESP32
+- Abre o `security_esp32.ino` no Arduino IDE
+- Seleciona a placa: `Tools → Board → ESP32 Arduino → ESP32 Dev Module`
+- Seleciona a porta: `Tools → Port → COM?`
+- Clica em Upload
+
 ---
 
 ## 📡 Tópicos MQTT
@@ -114,8 +137,16 @@ backend_python   ✅
 | Tópico | Direção | Payload | Descrição |
 |---|---|---|---|
 | `security/alert` | ESP32 → Backend | `{"zone": 1}` até `{"zone": 5}` | Sensor ativado em uma zona |
-| `security/status` | ESP32 → Backend | `{"armed": 1}` ou `{"armed": 0}` | Estado atual do sistema |
-| `security/control` | Backend → ESP32 | `1` ou `0` | Armar ou desarmar |
+| `security/status` | ESP32 → Backend | `0`, `1` ou `2` | Estado atual do sistema |
+| `security/control` | Backend → ESP32 | `0`, `1` ou `2` | Mudar estado do sistema |
+
+### Estados do sistema
+
+| Valor | Estado | Descrição |
+|---|---|---|
+| `0` | `disarmed` | Sistema desativado |
+| `1` | `armed` | Sistema armado, monitorando |
+| `2` | `active` | Sensor disparado, alarme ativo |
 
 ---
 
@@ -123,7 +154,7 @@ backend_python   ✅
 
 | Método | Endpoint | Descrição |
 |---|---|---|
-| `GET` | `/status` | Retorna se o sistema está armado ou desarmado |
+| `GET` | `/status` | Retorna o estado atual do sistema |
 | `POST` | `/control?ativo=1` | Arma o sistema |
 | `POST` | `/control?ativo=0` | Desarma o sistema |
 | `GET` | `/alerts` | Retorna histórico completo de alertas |
@@ -136,7 +167,7 @@ backend_python   ✅
 **GET /status**
 ```json
 {
-    "armed": 1
+    "status": "armed"
 }
 ```
 
@@ -146,19 +177,7 @@ backend_python   ✅
     {
         "id": 1,
         "zone": 3,
-        "dia": "16/06/2026",
-        "horario": "20:32:05"
-    }
-]
-```
-
-**GET /alerts/zone/3**
-```json
-[
-    {
-        "id": 1,
-        "zone": 3,
-        "dia": "16/06/2026",
+        "dia": "17/06/2026",
         "horario": "20:32:05"
     }
 ]
@@ -173,7 +192,7 @@ Quando um sensor é ativado, o sistema envia automaticamente uma mensagem no Tel
 ```
 🚨 ALERTA DE INTRUSO!
 Zona: 3
-Data: 16/06/2026
+Data: 17/06/2026
 Horário: 20:32:05
 ```
 
@@ -223,6 +242,21 @@ Entre no container do broker:
 docker exec -it mqtt_broker sh
 ```
 
+**Simula sistema desarmado:**
+```bash
+mosquitto_pub -t "security/status" -m "0"
+```
+
+**Simula sistema armado:**
+```bash
+mosquitto_pub -t "security/status" -m "1"
+```
+
+**Simula sistema ativo (alarme):**
+```bash
+mosquitto_pub -t "security/status" -m "2"
+```
+
 **Simula alerta na zona 1:**
 ```bash
 mosquitto_pub -t "security/alert" -m '{"zone": 1}'
@@ -233,26 +267,31 @@ mosquitto_pub -t "security/alert" -m '{"zone": 1}'
 mosquitto_pub -t "security/alert" -m '{"zone": 3}'
 ```
 
-**Simula o ESP32 armado:**
-```bash
-mosquitto_pub -t "security/status" -m '{"armed": 1}'
-```
-
-**Simula o ESP32 desarmado:**
-```bash
-mosquitto_pub -t "security/status" -m '{"armed": 0}'
-```
-
 ### Fluxo sugerido
 ```
 1. docker compose -f docker-compose.local.yml up -d --build
 2. Abre http://localhost:8000/docs
-3. Testa GET /status → deve retornar {"armed": 0}
-4. Simula ESP32 armando → testa GET /status novamente
-5. Simula alerta na zona 2 → testa GET /alerts
+3. Testa GET /status → deve retornar {"status": "disarmed"}
+4. Publica "1" no security/status → testa GET /status → {"status": "armed"}
+5. Publica alerta na zona 2 → testa GET /alerts
 6. Verifica notificação no Telegram
 7. Testa GET /alerts/zone/2 → retorna só alertas da zona 2
 ```
+
+---
+
+## 🔌 Protocolo ESP32 ↔ FPGA (UART)
+
+| Byte recebido | Bit 7 | Bit 6 | Descrição |
+|---|---|---|---|
+| Evento de sensor | `1` | — | Bits 0-4 indicam zonas ativas |
+| Mudança de estado | `0` | `1` | Bits 0-1 indicam o estado |
+
+| Bits 0-1 | Estado |
+|---|---|
+| `00` | disarmed |
+| `01` | armed |
+| `10` | active |
 
 ---
 

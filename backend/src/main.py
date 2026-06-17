@@ -67,7 +67,7 @@ def criar_tabela():
     conn.close()
 
 # ── MQTT ─────────────────────────────────────────────
-estado_atual = {"armed": 0}
+estado_atual = {"status": "disarmed"}
 
 async def esperar_mqtt():
     print("Aguardando Mosquitto ficar pronto...")
@@ -97,7 +97,7 @@ def on_message(client, userdata, msg):
         payload = raw
 
     if topic == "security/alert":
-        agora = datetime.now(fuso_brasil)  # ← fuso horário correto
+        agora = datetime.now(fuso_brasil)
 
         if isinstance(payload, dict):
             zone = payload.get("zone", 0)
@@ -135,10 +135,19 @@ def on_message(client, userdata, msg):
 
     elif topic == "security/status":
         if isinstance(payload, dict):
-            estado_atual["armed"] = payload.get("armed")
+            status = payload.get("status", None)
+            armed  = payload.get("armed", None)
+
+            if status is not None:
+                estado_atual["status"] = status
+            elif armed is not None:
+                mapa = {0: "disarmed", 1: "armed", 2: "active"}
+                estado_atual["status"] = mapa.get(int(armed), "disarmed")
         else:
-            estado_atual["armed"] = int(payload)
-        print(f"Estado atualizado: {'armado' if estado_atual['armed'] else 'desarmado'}")
+            mapa = {"0": "disarmed", "1": "armed", "2": "active"}
+            estado_atual["status"] = mapa.get(str(payload), str(payload))
+
+        print(f"Estado atualizado: {estado_atual['status']}")
 
 def iniciar_mqtt():
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
@@ -163,7 +172,7 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/status")
 def get_status():
-    return {"armed": estado_atual["armed"]}
+    return {"status": estado_atual["status"]}
 
 @app.post("/control")
 def controlar_sistema(ativo: int):

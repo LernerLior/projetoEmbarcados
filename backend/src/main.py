@@ -246,22 +246,19 @@ async def websocket_alerts(websocket: WebSocket):
 
 @app.get("/oauth/authorize")
 async def oauth_authorize(redirect_uri: str, state: str):
-    # Tela temporária para o aplicativo Google Home aprovar o vínculo de conta
-    # Em produção, você colocaria uma tela de login real aqui.
     code = secrets.token_hex(16)
     return RedirectResponse(url=f"{redirect_uri}?code={code}&state={state}")
 
 @app.post("/oauth/token")
 async def oauth_token(grant_type: str = Form(...), code: str = Form(None), refresh_token: str = Form(None)):
-    # Entrega as chaves de acesso que a Google usará para validar as requisições de voz
     return JSONResponse({
         "token_type": "bearer",
         "access_token": "google-access-token-valido",
         "refresh_token": "google-refresh-token-valido",
-        "expires_in": 3600
+        "expires_in": 315360000  # 10 anos de validade para testes duradouros
     })
 
-@app.post("/smarthome/fulfillment")
+@app.post("/google-home-webhook")
 async def google_fulfillment(request: Request):
     body = await request.json()
     inputs = body.get("inputs", [])
@@ -270,7 +267,7 @@ async def google_fulfillment(request: Request):
     for i in inputs:
         intent = i.get("intent")
 
-        # 1. SYNC: Diz ao ecossistema Google que existe um Alarme
+        # 1. SYNC: Mapeia o alarme dentro da infraestrutura Google
         if intent == "action.devices.SYNC":
             response_payload = {
                 "agentUserId": "usuario_local_123",
@@ -291,7 +288,7 @@ async def google_fulfillment(request: Request):
                 }]
             }
 
-        # 2. QUERY: Responde para a Google se o alarme está ativo ou não
+        # 2. QUERY: Responde o status atual de arme/desarme para o Google Home
         elif intent == "action.devices.QUERY":
             response_payload = {
                 "devices": {
@@ -302,5 +299,38 @@ async def google_fulfillment(request: Request):
                 }
             }
 
-        # 3. EXECUTE: Dispara quando você fala "Ok Google, arme o alarme"
+        # 3. EXECUTE: Dispara ao falar "Ok Google, arme o alarme" ou "desarme"
         elif intent == "action.devices.EXECUTE":
+            commands_response = []
+            payload_commands = i.get("payload", {}).get("commands", [])
+
+            for cmd_block in payload_commands:
+                devices = cmd_block.get("devices", [])
+                executions = cmd_block.get("execution", [])
+                device_ids = [d["id"] for d in devices]
+
+                for exec_item in executions:
+                    if exec_item["command"] == "action.devices.commands.ArmDisarm":
+                        deve_armar = exec_item["params"]["arm"]
+                        
+                        # Transforma True/False no inteiro correspondente ao seu MQTT
+                        valor_mqtt = 1 if deve_armar else 0
+                        
+                        # Roda o comando MQTT original
+                        enviar_comando_mqtt(valor_mqtt)
+                        
+                        # Atualiza a memória de status local
+                        estado_atual["armed"] = valor_mqtt
+
+                        commands_response.append({
+                            "ids": device_ids,
+                            "status": "SUCCESS",
+                            "states": {
+                                "isArmed": deve_armar,
+                                "online": True
+                            }
+                        })
+
+            response_payload = {
+                "commands": commands_response
+            }

@@ -8,6 +8,9 @@ import json
 from datetime import datetime
 import asyncio
 import secrets
+import pytz
+
+from telegram import enviar_telegram
 
 # ── WebSocket Manager ────────────────────────────────
 class ConnectionManager:
@@ -30,6 +33,9 @@ class ConnectionManager:
                 self.disconnect(connection)
 
 manager = ConnectionManager()
+
+# ── Fuso horário ─────────────────────────────────────
+fuso_brasil = pytz.timezone("America/Sao_Paulo")
 
 # ── Banco de dados ───────────────────────────────────
 def get_db():
@@ -109,7 +115,7 @@ def on_message(client, userdata, msg):
         payload = raw
 
     if topic == "security/alert":
-        agora = datetime.now()
+        agora = datetime.now(fuso_brasil)  # ← fuso horário correto
 
         if isinstance(payload, dict):
             zone = payload.get("zone", 1)
@@ -147,7 +153,16 @@ def on_message(client, userdata, msg):
         }
 
         if main_loop:
+            # 1. Envia o alerta via WebSocket para o seu app React Native (Sem travar a Thread)
             asyncio.run_coroutine_threadsafe(manager.broadcast(alerta), main_loop)
+            
+            # 2. Envia a notificação do Telegram (Garante que roda na Thread correta)
+            enviar_telegram(
+                f"🚨 ALERTA DE INTRUSO!\n"
+                f"Zona: {zone}\n"
+                f"Data: {agora.strftime('%d/%m/%Y')}\n"
+                f"Horário: {agora.strftime('%H:%M:%S')}"
+            )
 
     elif topic == "security/status":
         if isinstance(payload, dict):

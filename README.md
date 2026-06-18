@@ -1,4 +1,4 @@
-# 🔒 Sistema de Segurança com ESP32
+# Sistema de Segurança com ESP32
 
 Sistema de detecção de intrusos com ESP32, comunicação MQTT e backend em Python.
 

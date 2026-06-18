@@ -14,6 +14,11 @@ Sistema de detecção de intrusos com ESP32, comunicação MQTT e backend em Pyt
 | VINICIUS FIORAVANTE SILVA |
 
 ---
+## 📋 Link de acesso à documentação técnica:
+| Propósito | Link |
+|---|---|
+| Download da documentação técnica | [https://github.com/Ricciow/Embarcados/](https://drive.google.com/drive/folders/1yBeXkIWZ1yUI2G5Az3jE6LyOPoE5jVPC?hl=pt-br&q=sharedwith:public%20parent:1yBeXkIWZ1yUI2G5Az3jE6LyOPoE5jVPC) | 
+---
 ## 📋 Link de acesso aos repositórios utilizados:
 
 | Propósito | Link |

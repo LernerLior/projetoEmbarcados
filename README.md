@@ -43,7 +43,7 @@ O projeto foi está dividido 3 partes:
 
 # Detalhes do repositorio atual:
 
----
+
 
 ## 🏗️ Arquitetura
 

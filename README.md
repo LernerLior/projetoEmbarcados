@@ -20,7 +20,7 @@ Sistema de detecção de intrusos com ESP32, comunicação MQTT e backend em Pyt
 |---|---|
 | Programação do FPGA e ESP32 | https://github.com/Ricciow/Embarcados/ | 
 | Backend do aplicativo | https://github.com/LernerLior/projetoEmbarcados| 
-| Frontend do aplicativo |
+| Frontend do aplicativo | https://github.com/ViniciusFS1/Embarcados_House_App_Front|
 
 ---
 ## 📋 Sobre o Projeto

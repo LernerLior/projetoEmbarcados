@@ -7,7 +7,7 @@ import json
 from datetime import datetime
 import asyncio
 import pytz
-
+from google_home import router as google_home_router, set_estado
 from telegram import enviar_telegram
 
 # ── WebSocket Manager ────────────────────────────────
@@ -68,6 +68,7 @@ def criar_tabela():
 
 # ── MQTT ─────────────────────────────────────────────
 estado_atual = {"status": "disarmed"}
+set_estado(estado_atual)
 
 async def esperar_mqtt():
     print("Aguardando Mosquitto ficar pronto...")
@@ -167,6 +168,7 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(google_home_router)
 
 # ── Endpoints ────────────────────────────────────────
 

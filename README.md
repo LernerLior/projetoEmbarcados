@@ -174,6 +174,7 @@ backend_python   ✅
 | `GET` | `/alerts/{id}` | Retorna um alerta específico |
 | `GET` | `/alerts/zone/{zone_id}` | Retorna alertas de uma zona específica (1 a 5) |
 | `WS` | `/ws/alerts` | Alertas em tempo real via WebSocket |
+| `WS` | `/ws/status` | Status em tempo real via WebSocket |
 
 ### Exemplos de resposta
 

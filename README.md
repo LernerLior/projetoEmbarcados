@@ -41,9 +41,6 @@ O projeto foi está dividido 3 partes:
 
 ---
 
-# Detalhes do repositorio atual:
-
-
 
 ## 🏗️ Arquitetura
 
@@ -81,6 +78,8 @@ FPGA (Basys 3) + Sensores (5 zonas)
 - **Telegram Bot** — Notificações em tempo real
 
 ---
+# Detalhes do repositorio atual:
+
 
 ## 📁 Estrutura do Projeto
 

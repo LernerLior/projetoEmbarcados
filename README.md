@@ -37,7 +37,7 @@ O projeto foi está dividido 3 partes:
 
 | Propósito | Link |
 |---|---|
-| Vídeo do sistema em execução |   |
+| Vídeo do sistema em execução | https://youtu.be/SQBNVCOHkRk  |
 
 ---
 
